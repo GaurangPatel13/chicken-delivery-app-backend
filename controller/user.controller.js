@@ -2,6 +2,7 @@ import User from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendToOtp } from "../utils/nodemailer.js";
+import { validatePassword } from "../utils/helperFunctions.js";
 
 export const userRegister = async (req, res) => {
   try {
@@ -25,8 +26,10 @@ export const userRegister = async (req, res) => {
         );
         userExists.password = getHashPassword;
 
+        const otp = Math.floor(100000 + Math.random() * 900000);
+
         await sendToOtp({
-          user: newUser,
+          user: userExists,
           otp,
         });
 
@@ -59,8 +62,8 @@ export const userRegister = async (req, res) => {
     });
 
     return res
-      .status(200)
-      .json({ message: "User registered successfully. OTP sent to email" });
+      .status(201)
+      .json({ message: "User registered successfully. OTP sent to email", success: true });
   } catch (error) {
     console.error(error);
     return res
@@ -106,6 +109,7 @@ export const verifyOtp = async (req, res) => {
 
     return res.status(200).json({
       message: "OTP verified successfully",
+      success: true,
       token,
       user: {
         name: user.name,
@@ -151,6 +155,7 @@ export const userLogin = async (req, res) => {
 
     return res.status(200).json({
       message: "Login successful",
+      success: true,
       token,
       user: {
         name: user.name,
@@ -177,7 +182,7 @@ export const getUserProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    return res.status(200).json({ user });
+    return res.status(200).json({ message: "User profile fetched successfully", success: true, data: user });
   } catch (error) {
     console.error(error);
     return res
@@ -210,11 +215,126 @@ export const changePassword = async (req, res) => {
     user.password = newHashedPassword;
     await user.save();
 
-    return res.status(200).json({ message: "Password changed successfully" });
+    return res.status(200).json({ message: "Password changed successfully", success: true });
   } catch (error) {
     console.error(error);
     return res
       .status(500)
       .json({ message: "Server error", error: error.message });
+  }
+};
+
+export const resendOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "User does not exist" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    const expireOtp = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.otp = otp;
+    user.otpExpire = expireOtp;
+
+    await user.save();
+
+    await sendToOtp({
+      user,
+      otp,
+    });
+
+    return res.status(200).json({ message: "Otp sent successfully", success: true });
+  } catch (error) {
+    console.log(error);
+    return res
+      .status(500)
+      .json({ message: error.message || "Internal Server Error" });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "User does not exist" });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    const expireOtp = new Date(Date.now() + 10 * 60 * 1000);
+
+    user.otp = otp;
+    user.otpExpire = expireOtp;
+
+    await user.save();
+
+    await sendToOtp({
+      user,
+      otp,
+    });
+
+    return res.status(200).json({ message: "Otp sent successfully", success: true });
+  } catch (error) {
+    console.log(error);
+    return res
+      .status(500)
+      .json({ message: error.message || "Internal Server Error" });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, password, otp } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "User does not exist" });
+    }
+
+    const { otpExpire } = user;
+
+    if (user.otp !== otp) {
+      return res.status(400).json({ message: "Invalid Otp" });
+    }
+
+    if (otpExpire < new Date()) {
+      return res.status(400).json({ message: "Otp has expired" });
+    }
+
+    if (!validatePassword(password)) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character.",
+      });
+    }
+
+    const getHashPassword = await bcrypt.hash(password, 10);
+
+    user.password = getHashPassword;
+
+    await user.save();
+
+    return res.status(200).json({ message: "Password reset successfully", success: true });
+  } catch (error) {
+    console.log(error);
+    return res
+      .status(500)
+      .json({ message: error.message || "Internal Server Error" });
   }
 };
